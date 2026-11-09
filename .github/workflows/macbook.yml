@@ -1,0 +1,69 @@
+name: MacBook Intel build
+
+# Builds the official Cloudroom GUI plus the MacBook patches for Intel Macs
+# and publishes the zip as a release in this fork (macbook-vNNN).
+on:
+  workflow_dispatch:
+  push:
+    branches: [macbook]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macbook-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Version from the merged official release
+        id: version
+        run: |
+          n=$(git log --grep='^Publish GUI v[0-9]' -1 --format=%s | sed -E 's/^Publish GUI v([0-9]+).*/\1/')
+          test -n "$n"
+          echo "v$((n-1))" > apps/desktop/.cloudroom-version
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: gui/.nvmrc
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - name: Build server and app
+        run: pnpm exec turbo run build --filter=bb-app --output-logs=new-only
+      - name: Package Intel app
+        working-directory: gui/apps/desktop
+        run: pnpm run desktop:build:mac-intel
+      - name: Smoke check
+        working-directory: gui/apps/desktop
+        run: |
+          app=$(find release.noindex -maxdepth 2 -name 'Cloudroom.app' -type d | head -1)
+          test -n "$app"
+          file "$app/Contents/MacOS/Cloudroom" | grep -q x86_64
+          "$app/Contents/Resources/app.asar.unpacked/node_modules/bb-app/server/dist/assets/python/bin/python3" -c 'import sqlite3,ssl'
+      - name: Publish release
+        working-directory: gui/apps/desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="macbook-v${{ steps.version.outputs.n }}-${{ steps.version.outputs.sha }}"
+          zip=$(find release.noindex -maxdepth 1 -name '*.zip' | head -1)
+          cp "$zip" "Cloudroom-MacBook-v${{ steps.version.outputs.n }}-x64.zip"
+          gh release create "$tag" "Cloudroom-MacBook-v${{ steps.version.outputs.n }}-x64.zip" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "Cloudroom v${{ steps.version.outputs.n }} MacBook Intel (${{ steps.version.outputs.sha }})" \
+            --notes "Official gui-v${{ steps.version.outputs.n }} + MacBook patches. Commit $GITHUB_SHA."

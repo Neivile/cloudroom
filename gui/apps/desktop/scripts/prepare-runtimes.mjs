@@ -11,10 +11,18 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../.bundled-runtimes/", import.meta.url));
 const gitCommit = "67ad42147a7acc2af6074753ebd03d904476118f";
 const pythonRelease = "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/";
+// MacBook fork: Intel Macs bundle the x86_64 builds of the same Python and Git releases.
+const intelMac = process.platform === "darwin" && process.arch === "x64";
 const archives = [
-  ["python.tar.gz", pythonRelease + "cpython-3.12.13+20260510-aarch64-apple-darwin-install_only_stripped.tar.gz", "55bc1a5edbc8ac4da0081f4f5731ed2d1ed10c57cb37a820b2a0dbc7cad742e9"],
-  ["python-full.tar.zst", pythonRelease + "cpython-3.12.13+20260510-aarch64-apple-darwin-pgo+lto-full.tar.zst", "0750a735a09181ce203fb357df7221eab78d8ff4372d5cb6d58a2053765befdb"],
-  ["git.tar.gz", "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-macOS-arm64.tar.gz", "f9dc64635a5b62fbd7ad95db73268bbb8912255ac516d65d37bf7af22fcb8ffe"],
+  intelMac
+    ? ["python.tar.gz", pythonRelease + "cpython-3.12.13+20260510-x86_64-apple-darwin-install_only_stripped.tar.gz", "6bab7fa97d4f2ddba86da0e05acff66c53b5edaca1df8edcf00ddca785a9c59b"]
+    : ["python.tar.gz", pythonRelease + "cpython-3.12.13+20260510-aarch64-apple-darwin-install_only_stripped.tar.gz", "55bc1a5edbc8ac4da0081f4f5731ed2d1ed10c57cb37a820b2a0dbc7cad742e9"],
+  intelMac
+    ? ["python-full.tar.zst", pythonRelease + "cpython-3.12.13+20260510-x86_64-apple-darwin-pgo+lto-full.tar.zst", "9be14730abd1e9fa0a2b3b96e74bb271a08484063225357076bd5134773ca78a"]
+    : ["python-full.tar.zst", pythonRelease + "cpython-3.12.13+20260510-aarch64-apple-darwin-pgo+lto-full.tar.zst", "0750a735a09181ce203fb357df7221eab78d8ff4372d5cb6d58a2053765befdb"],
+  intelMac
+    ? ["git.tar.gz", "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-macOS-x64.tar.gz", "ae6686718aa34f4140424db16b92a47dcffd6d1f312eb8b5f3b267f7404e2680"]
+    : ["git.tar.gz", "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-macOS-arm64.tar.gz", "f9dc64635a5b62fbd7ad95db73268bbb8912255ac516d65d37bf7af22fcb8ffe"],
   ["git-source.tar.gz", `https://github.com/git/git/archive/${gitCommit}.tar.gz`, "89b73762be55037144c92eaf5d0657b644330770f66c584c1ba2e7b90b6218cf"],
   ["git-build-source.tar.gz", "https://github.com/desktop/dugite-native/archive/refs/tags/v2.53.0-4.tar.gz", "6600bdf3c7e2cbb127ac63d9d38da3a91267610c6034ecb8ff73e94f89508f33"],
   ["cacert.pem", "https://curl.se/ca/cacert-2026-10-20.pem", "796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe"],
@@ -98,8 +106,8 @@ async function prepareHelper() {
 
 export async function prepareRuntimes() {
   if (process.platform === "win32" && process.arch === "x64") return prepareWindowsPython();
-  if (process.platform !== "darwin" || process.arch !== "arm64") {
-    throw new Error("Bundled runtimes require an Apple Silicon macOS build host.");
+  if (process.platform !== "darwin" || (process.arch !== "arm64" && process.arch !== "x64")) {
+    throw new Error("Bundled runtimes require a macOS build host (Apple Silicon or Intel).");
   }
   await mkdir(root, { recursive: true });
   await Promise.all(archives.map(download));

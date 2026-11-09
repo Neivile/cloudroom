@@ -81,6 +81,7 @@ interface DesktopUpdateSupport {
 }
 
 interface ResolveDesktopUpdateSupportArgs {
+  arch?: string;
   canReplaceAppImage: (appImagePath: string) => boolean;
   env: NodeJS.ProcessEnv;
   platform: BbDesktopVersionFeedPlatform;
@@ -90,6 +91,10 @@ export function resolveDesktopUpdateSupport(
   args: ResolveDesktopUpdateSupportArgs,
 ): DesktopUpdateSupport {
   // The NSIS installer replaces the per-user install in place, as Squirrel.Mac does on macOS.
+  // MacBook fork: the official feed ships Apple Silicon only, so an Intel build must never self-replace.
+  if (args.platform === "macos" && args.arch === "x64") {
+    return { autoUpdate: false, versionCheck: true };
+  }
   if (args.platform === "macos" || args.platform === "windows") {
     return { autoUpdate: true, versionCheck: true };
   }
