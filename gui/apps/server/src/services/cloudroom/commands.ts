@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, stat, rename, rm } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { and, desc, eq, inArray, isNull, max, notInArray } from "drizzle-orm";
-import { createThread, findLastCompletedRootStoredTurn, getAppSettings, getProject, getThread, getThreadExecutionOverride, setThreadExecutionOverride, updateThread, cloudroomThreads, cloudroomCommands, events, threads, type DbConnection, type DbQueryConnection, type DbTransaction } from "@cloudroom/db";
+import { createThread, findLastCompletedRootStoredTurn, getAppSettings, getProject, getThread, getThreadExecutionOverride, setThreadExecutionOverride, updateThread, cloudroomThreads, cloudroomCommands, events, projects, threads, type DbConnection, type DbQueryConnection, type DbTransaction } from "@cloudroom/db";
 import { PERSONAL_PROJECT_ID, rawThreadIdSchema, encodeClientTurnRequestIdNumber, isStandaloneBuiltinCompactCommand, promptInputSchema, reasoningLevelSchema, reconcileReasoningLevel, defaultReasoningLevel, threadQueuedMessageSchema, type Thread, type PromptInput, type ThreadEventType, type ThreadEventTurnStatus, type ThreadChangeKind, type ReasoningLevel, COMPUTER, COMPUTER_TITLE } from "@cloudroom/domain";
 import type { CreateThreadRequest, ForkThreadRequest, SendMessageRequest, SendMessageResponse } from "@cloudroom/server-contract";
 import { z } from "zod";
@@ -713,6 +713,39 @@ class CloudroomService {
     void this.deliver(run.thread).catch(() => {});
   }
 
+
+  /** MacBook fork: a Cloud thread another computer of this account started (say, the Windows PC). Shown here as a
+   *  normal Cloud thread bound to the same sandbox session, so sends, photos, files and stop use the official paths.
+   *  Never wakes a sleeping sandbox: it is adopted the next time it is awake. Threads this Mac already has, in any
+   *  state (archived and hidden included), are never touched. */
+  async adoptAccountThread(entry: { thread: string; title: string | null; projectId: string | null; projectName: string | null }): Promise<"adopted" | "known" | "asleep" | "skipped"> {
+    if (!/^thr_[a-z0-9]+$/.test(entry.thread)) return "skipped";
+    if (getThread(this.deps.db, entry.thread)) return "known";
+    const local = this.deps.db.select({ id: projects.id, name: projects.name }).from(projects).all();
+    const wanted = entry.projectName?.trim().toLowerCase();
+    const projectId = (entry.projectId && getProject(this.deps.db, entry.projectId) ? entry.projectId : null)
+      ?? local.find(project => wanted && project.name.trim().toLowerCase() === wanted)?.id
+      ?? PERSONAL_PROJECT_ID;
+    const connection = await this.sandboxes.connection(entry.thread, this.sandboxProject(projectId), false);
+    if (!connection) return "asleep";
+    const client = new CloudroomClient({ url: connection.url, token: connection.token });
+    const { sessions } = await client.listSessions();
+    const root = sessions.filter(session => !session.parent_session && !session.session_id.startsWith(`cr_${WEBSITE_CHILD}`))
+      .sort((a, b) => Number(a.state === "closed") - Number(b.state === "closed") || (b.last_activity_ms ?? 0) - (a.last_activity_ms ?? 0))[0];
+    if (!root || !isCloudProvider(root.harness ?? undefined) || !root.model) return "skipped";
+    const providerId = root.harness as CloudProvider, model = root.model;
+    const adopted = this.deps.db.transaction(tx => {
+      if (getThread(tx, entry.thread) || tx.select().from(cloudroomThreads).where(eq(cloudroomThreads.sessionId, root.session_id)).get()) return null;
+      const thread = createThread(tx, this.deps.hub, { id: entry.thread, executionTarget: "cloud", projectId, providerId, title: entry.title, titleFallback: `${HARNESS_NAMES[providerId] ?? "Cloud"} thread`, status: "pending" });
+      tx.insert(cloudroomThreads).values({ threadId: entry.thread, coreUrl: SANDBOX_PREFIX + entry.thread, sessionId: root.session_id, startRequestId: root.session_id.replace(/^cr_/, ""), model, reasoning: "medium" }).run();
+      return thread;
+    });
+    if (!adopted) return "known";
+    emitPluginThreadCreated(adopted);
+    this.notify(entry.thread);
+    void this.deliver(entry.thread).catch(() => {});
+    return "adopted";
+  }
 
   /** A child this Cloud thread started in a sandbox of its own through the website (ADR 20261104-015709), from Core's
    *  `own_child` record, so it shows under its parent even if it started while this Mac was off. A thread already

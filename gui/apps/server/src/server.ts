@@ -25,6 +25,7 @@ import { registerUiPreferenceRoutes } from "./routes/ui-preferences.js";
 import { registerUiPerfRoutes } from "./routes/ui-perf.js";
 import { registerTerminalRoutes } from "./routes/terminals.js";
 import { installCloudroomRoutes } from "./services/cloudroom/routes.js";
+import { startAccountThreads } from "./services/cloudroom/account-threads.js";
 import { registerThreadRoutes } from "./routes/threads/index.js";
 import { registerQueueRoutes } from "./routes/queue.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
@@ -731,6 +732,8 @@ export function createApp(
   registerPluginRoutes(publicApi, deps, pluginService, upgradeWebSocket);
   registerSkillsRegistryRoutes(publicApi, deps);
   installCloudroomRoutes(app, deps, pluginService);
+  // MacBook fork: Cloud threads from this account's other computers.
+  if (!process.env.VITEST) startAccountThreads(deps, pluginService);
   registerUiPerfRoutes(app, deps);
   app.route("/api/v1", publicApi);
   app.use("/api/v1/*", () => {
