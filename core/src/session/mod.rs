@@ -8,7 +8,7 @@ pub mod automation;
 mod catalog;
 mod guard;
 pub(crate) mod history;
-mod prompt;
+pub(crate) mod prompt;
 pub(crate) mod relay;
 pub mod report;
 mod sleep;
@@ -148,6 +148,9 @@ pub struct Session {
     // Archived by `room-cli thread archive`; `thread list` hides it unless asked.
     #[serde(default)]
     pub archived: bool,
+    // The turn this thread archived itself in: archived, it still reports that one (relay.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_turn: Option<String>,
     // Turns already reported to the parent in another sandbox (relay.rs).
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub reported: std::collections::BTreeSet<String>,
@@ -542,9 +545,11 @@ impl Manager {
         let history = history::History::new(&config)?;
         let plan = accounts::PlanState::load(&config.state_dir);
         let local = Arc::new(Mutex::new(local));
-        let registry = local.clone();
+        let (registry, served) = (local.clone(), previews.clone());
         let observability = Observability::start(&config, history.api.clone(), move || {
-            registry.lock().unwrap().agent_counts()
+            let mut counts = registry.lock().unwrap().agent_counts();
+            counts.preview_at = served.last_activity();
+            counts
         });
         Ok(Arc::new(Self {
             config,

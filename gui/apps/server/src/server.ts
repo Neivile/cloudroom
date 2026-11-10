@@ -113,6 +113,7 @@ import {
   captureCallerTrust,
   isOpenWithoutCallerProof,
   isTrustedCaller,
+  loopbackPeer,
   PLUGIN_WIRE_HTTP_PATH,
   registerCallerProofRoutes,
 } from "./caller-access.js";
@@ -579,7 +580,11 @@ export function createApp(
     }
     if (
       isTrustedCaller(context) ||
-      isOpenWithoutCallerProof(context.req.method, context.req.path)
+      (await isOpenWithoutCallerProof(
+        context.req.method,
+        context.req.path,
+        loopbackPeer(context),
+      ))
     ) {
       return next();
     }
@@ -860,7 +865,15 @@ export function createApp(
         reason: WEB_SOCKET_SHUTDOWN_REASON,
         server: wss,
       }),
-    injectWebSocket,
+    // Node hands upgrade sockets over without an error listener, and the
+    // WebSocket handler awaits the app before it answers. A client reset in
+    // that time would crash the server.
+    injectWebSocket: (server) => {
+      server.on("upgrade", (_request, socket) => {
+        socket.on("error", () => socket.destroy());
+      });
+      injectWebSocket(server);
+    },
     pluginService,
     pluginCatalogService,
   };
